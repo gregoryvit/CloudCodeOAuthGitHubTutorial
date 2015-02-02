@@ -1,18 +1,17 @@
 /**
- * Login With GitHub
+ * Login With VK.com
  *
  * An example web application implementing OAuth2 in Cloud Code
  *
  * There will be four routes:
- * / - The main route will show a page with a Login with GitHub link
+ * / - The main route will show a page with a Login with VK link
  *       JavaScript will detect if it's logged in and navigate to /main
- * /authorize - This url will start the OAuth process and redirect to GitHub
- * /oauthCallback - Sent back from GitHub, this will validate the authorization
+ * /authorize - This url will start the OAuth process and redirect to VK
+ * /oauthCallback - Sent back from VK, this will validate the authorization
  *                    and create/update a Parse User before using 'become' to
  *                    set the user on the client side and redirecting to /main
- * /main - The application queries and displays some of the users GitHub data
+ * /main - The application queries and displays some of the users VK data
  *
- * @author Fosco Marotto (Facebook) <fjm@fb.com>
  */
 
 /**
@@ -29,14 +28,16 @@ var Buffer = require('buffer').Buffer;
 var app = express();
 
 /**
- * GitHub specific details, including application id and secret
+ * VK specific details, including application id and secret
  */
-var githubClientId = 'your-github-client-id-here';
-var githubClientSecret = 'your-github-client-secret-here';
+var vkAppId = 'vk-app-id';
+var vkAppSecret = 'vk-app-secret';
+var vkScope = '';
+var vkRedirectURI = 'https://<parse-app-name>.parseapp.com/oauthCallback'
 
-var githubRedirectEndpoint = 'https://github.com/login/oauth/authorize?';
-var githubValidateEndpoint = 'https://github.com/login/oauth/access_token';
-var githubUserEndpoint = 'https://api.github.com/user';
+var vkRedirectEndpoint = 'https://oauth.vk.com/authorize?';
+var vkValidateEndpoint = 'https://oauth.vk.com/access_token';
+var vkUserEndpoint = 'https://api.vk.com/method/users.get';
 
 /**
  * In the Data Browser, set the Class Permissions for these 2 classes to
@@ -72,28 +73,31 @@ app.get('/', function(req, res) {
 });
 
 /**
- * Login with GitHub route.
+ * Login with VK route.
  *
- * When called, generate a request token and redirect the browser to GitHub.
+ * When called, generate a request token and redirect the browser to VK.
  */
 app.get('/authorize', function(req, res) {
-
   var tokenRequest = new TokenRequest();
   // Secure the object against public access.
   tokenRequest.setACL(restrictedAcl);
   /**
-   * Save this request in a Parse Object for validation when GitHub responds
+   * Save this request in a Parse Object for validation when VK responds
    * Use the master key because this class is protected
    */
   tokenRequest.save(null, { useMasterKey: true }).then(function(obj) {
     /**
-     * Redirect the browser to GitHub for authorization.
+     * Redirect the browser to VK for authorization.
      * This uses the objectId of the new TokenRequest as the 'state'
-     *   variable in the GitHub redirect.
+     *   variable in the VK redirect.
      */
     res.redirect(
-      githubRedirectEndpoint + querystring.stringify({
-        client_id: githubClientId,
+      vkRedirectEndpoint + querystring.stringify({
+        client_id: vkAppId,
+        scope: vkScope,
+        redirect_uri: vkRedirectURI,
+        v: '5.28',
+        response_type: 'code',
         state: obj.id
       })
     );
@@ -107,10 +111,10 @@ app.get('/authorize', function(req, res) {
 /**
  * OAuth Callback route.
  *
- * This is intended to be accessed via redirect from GitHub.  The request
+ * This is intended to be accessed via redirect from VK.  The request
  *   will be validated against a previously stored TokenRequest and against
- *   another GitHub endpoint, and if valid, a User will be created and/or
- *   updated with details from GitHub.  A page will be rendered which will
+ *   another VK endpoint, and if valid, a User will be created and/or
+ *   updated with details from VK.  A page will be rendered which will
  *   'become' the user on the client-side and redirect to the /main page.
  */
 app.get('/oauthCallback', function(req, res) {
@@ -136,30 +140,30 @@ app.get('/oauthCallback', function(req, res) {
     // Destroy the TokenRequest before continuing.
     return obj.destroy();
   }).then(function() {
-    // Validate & Exchange the code parameter for an access token from GitHub
-    return getGitHubAccessToken(data.code);
+    // Validate & Exchange the code parameter for an access token from VK
+    return getVKAccessToken(data.code);
   }).then(function(access) {
     /**
-     * Process the response from GitHub, return either the getGitHubUserDetails
+     * Process the response from VK, return either the getVKUserDetails
      *   promise, or reject the promise.
      */
-    var githubData = access.data;
-    if (githubData && githubData.access_token && githubData.token_type) {
-      token = githubData.access_token;
-      return getGitHubUserDetails(token);
+    var vkData = access.data;
+    if (vkData && vkData.access_token && vkData.user_id) {
+      token = vkData.access_token;
+      return getVKUserDetails(token);
     } else {
       return Parse.Promise.error("Invalid access request.");
     }
   }).then(function(userDataResponse) {
     /**
-     * Process the users GitHub details, return either the upsertGitHubUser
+     * Process the users VK details, return either the upsertVKUser
      *   promise, or reject the promise.
      */
-    var userData = userDataResponse.data;
-    if (userData && userData.login && userData.id) {
-      return upsertGitHubUser(token, userData);
+    var userData = userDataResponse.data.response[0];
+    if (userData && userData.first_name && userData.last_name && userData.uid) {
+      return upsertVKUser(token, userData);
     } else {
-      return Parse.Promise.error("Unable to parse GitHub data");
+      return Parse.Promise.error("Unable to parse VK data");
     }
   }).then(function(user) {
     /**
@@ -184,7 +188,7 @@ app.get('/oauthCallback', function(req, res) {
  * Logged in route.
  *
  * JavaScript will validate login and call a Cloud function to get the users
- *   GitHub details using the stored access token.
+ *   VK details using the stored access token.
  */
 app.get('/main', function(req, res) {
   res.render('main', {});
@@ -197,9 +201,9 @@ app.listen();
 
 /**
  * Cloud function which will load a user's accessToken from TokenStorage and
- * request their details from GitHub for display on the client side.
+ * request their details from VK for display on the client side.
  */
-Parse.Cloud.define('getGitHubData', function(request, response) {
+Parse.Cloud.define('getVKData', function(request, response) {
   if (!request.user) {
     return response.error('Must be logged in.');
   }
@@ -210,11 +214,11 @@ Parse.Cloud.define('getGitHubData', function(request, response) {
     return query.first({ useMasterKey: true });
   }).then(function(tokenData) {
     if (!tokenData) {
-      return Parse.Promise.error('No GitHub data found.');
+      return Parse.Promise.error('No VK data found.');
     }
-    return getGitHubUserDetails(tokenData.get('accessToken'));
+    return getVKUserDetails(tokenData.get('accessToken'));
   }).then(function(userDataResponse) {
-    var userData = userDataResponse.data;
+    var userData = userDataResponse.data.response[0];
     response.success(userData);
   }, function(error) {
     response.error(error);
@@ -222,19 +226,20 @@ Parse.Cloud.define('getGitHubData', function(request, response) {
 });
 
 /**
- * This function is called when GitHub redirects the user back after
- *   authorization.  It calls back to GitHub to validate and exchange the code
+ * This function is called when VK redirects the user back after
+ *   authorization.  It calls back to VK to validate and exchange the code
  *   for an access token.
  */
-var getGitHubAccessToken = function(code) {
+var getVKAccessToken = function(code) {
   var body = querystring.stringify({
-    client_id: githubClientId,
-    client_secret: githubClientSecret,
-    code: code
+    client_id: vkAppId,
+    client_secret: vkAppSecret,
+    code: code,
+    redirect_uri:vkRedirectURI 
   });
   return Parse.Cloud.httpRequest({
     method: 'POST',
-    url: githubValidateEndpoint,
+    url: vkValidateEndpoint,
     headers: {
       'Accept': 'application/json',
       'User-Agent': 'Parse.com Cloud Code'
@@ -244,13 +249,13 @@ var getGitHubAccessToken = function(code) {
 }
 
 /**
- * This function calls the githubUserEndpoint to get the user details for the
+ * This function calls the vkUserEndpoint to get the user details for the
  * provided access token, returning the promise from the httpRequest.
  */
-var getGitHubUserDetails = function(accessToken) {
+var getVKUserDetails = function(accessToken) {
   return Parse.Cloud.httpRequest({
     method: 'GET',
-    url: githubUserEndpoint,
+    url: vkUserEndpoint,
     params: { access_token: accessToken },
     headers: {
       'User-Agent': 'Parse.com Cloud Code'
@@ -259,19 +264,19 @@ var getGitHubUserDetails = function(accessToken) {
 }
 
 /**
- * This function checks to see if this GitHub user has logged in before.
+ * This function checks to see if this VK user has logged in before.
  * If the user is found, update the accessToken (if necessary) and return
- *   the users session token.  If not found, return the newGitHubUser promise.
+ *   the users session token.  If not found, return the newVKUser promise.
  */
-var upsertGitHubUser = function(accessToken, githubData) {
+var upsertVKUser = function(accessToken, vkData) {
   var query = new Parse.Query(TokenStorage);
-  query.equalTo('githubId', githubData.id);
+  query.equalTo('vkId', vkData.id);
   query.ascending('createdAt');
-  // Check if this githubId has previously logged in, using the master key
+  // Check if this vkId has previously logged in, using the master key
   return query.first({ useMasterKey: true }).then(function(tokenData) {
     // If not, create a new user.
     if (!tokenData) {
-      return newGitHubUser(accessToken, githubData);
+      return newVKUser(accessToken, vkData);
     }
     // If found, fetch the user.
     var user = tokenData.get('user');
@@ -295,11 +300,11 @@ var upsertGitHubUser = function(accessToken, githubData) {
 /**
  * This function creates a Parse User with a random login and password, and
  *   associates it with an object in the TokenStorage class.
- * Once completed, this will return upsertGitHubUser.  This is done to protect
+ * Once completed, this will return upsertVKUser.  This is done to protect
  *   against a race condition:  In the rare event where 2 new users are created
  *   at the same time, only the first one will actually get used.
  */
-var newGitHubUser = function(accessToken, githubData) {
+var newVKUser = function(accessToken, vkData) {
   var user = new Parse.User();
   // Generate a random username and password.
   var username = new Buffer(24);
@@ -312,16 +317,17 @@ var newGitHubUser = function(accessToken, githubData) {
   user.set("password", password.toString('base64'));
   // Sign up the new User
   return user.signUp().then(function(user) {
-    // create a new TokenStorage object to store the user+GitHub association.
+    // create a new TokenStorage object to store the user+VK association.
     var ts = new TokenStorage();
-    ts.set('githubId', githubData.id);
-    ts.set('githubLogin', githubData.login);
+    ts.set('vkId', vkData.id);
+    ts.set('vkFirstName', vkData.first_name);
+    ts.set('vkLastName', vkData.last_name);
     ts.set('accessToken', accessToken);
     ts.set('user', user);
     ts.setACL(restrictedAcl);
     // Use the master key because TokenStorage objects should be protected.
     return ts.save(null, { useMasterKey: true });
   }).then(function(tokenStorage) {
-    return upsertGitHubUser(accessToken, githubData);
+    return upsertVKUser(accessToken, vkData);
   });
 }

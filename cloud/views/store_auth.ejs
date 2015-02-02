@@ -1,11 +1,11 @@
 <% include head %>
-<p>Saving your GitHub session...</p>
+<p>Saving your VK session...</p>
 <script type="text/javascript">
 Parse.User.become('<%= sessionToken %>').then(function (user) {
   window.location.href='/main';
 },
 function (error) {
-  alert('Login with GitHub Failed.');
+  alert('Login with VK.com Failed.');
   window.location.href='/';
 });
 </script>
